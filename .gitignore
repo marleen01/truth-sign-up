@@ -1,0 +1,11 @@
+.env
+main.spec
+previous_versions
+included_data
+dist
+build
+accounts.csv
+app.log
+debugging.py
+email_details.txt
+login.txt
