@@ -48,8 +48,6 @@ def signal_handler(sig, frame):
     subprocess.run(f'{adb_path} kill-server', shell=True)
     sys.exit(0)
 
-
-
 def main(serialno):
     # Set the signal handler
     signal.signal(signal.SIGINT, signal_handler)
