@@ -42,17 +42,18 @@ def signal_handler(sig, frame):
     for device in devices:
         # Remove the proxy
         ProxyManager.remove_proxy(adb_path=adb_path, device_serial=device)
-        # Kill the adb server
-    try:
-        subprocess.run(f'{adb_path} -s {device} kill-server', shell=True)
-    except:
-        pass
+        logger.info(f"Removed proxy from device {device}.")
+    # Kill the adb server
+    logger.info('Killing the adb server...')
+    subprocess.run(f'{adb_path} kill-server', shell=True)
     sys.exit(0)
 
-# Set the signal handler
-signal.signal(signal.SIGINT, signal_handler)
+
 
 def main(serialno):
+    # Set the signal handler
+    signal.signal(signal.SIGINT, signal_handler)
+
     # Perform init steps
     perform_init_steps(adb_path, app_name, device_serial=serialno)
 
