@@ -15,7 +15,7 @@ import csv
 import sys
 import signal
 from proxy_manager import ProxyManager
-from multiprocessing import Process
+from multiprocessing import Process, freeze_support
 
 # Create a logger object
 logger = logging.getLogger()
@@ -247,5 +247,6 @@ def run_all_devices(devices):
         p.join()
         
 if __name__ == '__main__':
+    freeze_support()
     devices = helper.get_devices(adb_path)
     run_all_devices(devices)
