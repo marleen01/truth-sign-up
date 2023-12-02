@@ -68,7 +68,7 @@ def lease_number(api_key, service, rent_time, country, website):
     else:
         raise Exception('Failed to lease number. Response: ' + response.text)
 
-def get_code(api_key, action, id, website, max_retries=13):
+def get_code(api_key, action, id, website, max_retries=18):
     url = "https://" + website + "/stubs/handler_api.php"
     for _ in range(max_retries):
         params = {"api_key": api_key, "action": action, "id": id}
@@ -92,13 +92,19 @@ def get_code(api_key, action, id, website, max_retries=13):
                 return values['0']['text']
             elif response_json['status'] == 'error' and response_json['message'] == 'STATUS_WAIT_CODE':
                 logger.info('Waiting for code...')
-                time.sleep(3)
+                time.sleep(6)
             else:
                 break
-        raise Exception('Failed to get code.')
+    raise Exception('Failed to get code.')
 
 def mark_as_done(api_key, id, status, website):
     url = "https://" + website + "/stubs/handler_api.php"
     params = {"api_key": api_key, "action": "setStatus", "id": id, "status": status}
     response = requests.get(url, params=params)
     return response.text
+
+def cancel_rent(api_key, id):
+    url = "https://api.sms-activate.org/stubs/handler_api.php"
+    params = {"api_key": api_key, "action": "setRentStatus", "id": id, "status": 1}
+    response = requests.get(url, params=params)
+    return response.json()

@@ -5,7 +5,7 @@ from time import sleep
 import helper
 from get_mail import get_temp_email, get_message
 from ui_automation import interact_with_element, wait_for_view_text, set_date, print_views
-from get_phone import rent_number, get_code, mark_as_done, lease_number, parse_duration, parse_api_website, parse_country
+from get_phone import rent_number, get_code, mark_as_done, lease_number, parse_duration, parse_api_website, parse_country, cancel_rent
 from config import adb_path, app_name
 from recovery import perform_init_steps
 from generate_data import get_birthdate, generate_username, generate_random_password
@@ -144,76 +144,105 @@ def main(serialno):
     # Parse the API website from the config file
     website = parse_api_website()
 
-    # Search for phone number text field
-    if website == 'daisysms.com':
-        api_key = config('DAISY_API_KEY')
-        # Rent a number and parse the ID
-        number_id, phone_number = rent_number(api_key, 'getNumber', 'ada', website)
+    # Below logic is special for continously retrying to rent a number if the program refuses the number
+    max_attempts = 20
+    rented = []
+    uk_set = False
+    for attempt in range(max_attempts):
+        try:
+            # Search for phone number text field
+            if website == 'daisysms.com':
+                api_key = config('DAISY_API_KEY')
+                # Rent a number and parse the ID
+                number_id, phone_number = rent_number(api_key, 'getNumber', 'ada', website)
 
-    elif website == 'api.sms-activate.org':
-        api_key = config('SMS_ACTIVATE_API_KEY')
-        # Parse the duration from the config file
-        duration = parse_duration()
-        country = parse_country()
-        if country == 'ENGLAND':
-            country = 16
-        number_id, phone_number = lease_number(api_key, 'ada', duration, country, website)
-    else:
-        raise Exception('Unable to parse and set API key. Please check API keys in .env file.')
+            elif website == 'api.sms-activate.org':
+                api_key = config('SMS_ACTIVATE_API_KEY')
+                # Parse the duration from the config file
+                duration = parse_duration()
+                country = parse_country()
+                if country == 'ENGLAND':
+                    country = 16
+                number_id, phone_number = lease_number(api_key, 'ada', duration, country, website)
+            else:
+                raise Exception('Unable to parse and set API key. Please check API keys in .env file.')
 
-    logger.info(f"Number: {phone_number} ID: {number_id}")
-    sleep(5)
+            logger.info(f"Number: {phone_number} ID: {number_id}")
+            rented.append(number_id)
+            sleep(5)
 
-    if website == 'daisysms.com':
-        # Input phone number
-        number_field = vc.findViewByIdOrRaise('com.truthsocial.android.app:id/phone_edit')
-        number_field.setText(phone_number[1:])
+            if website == 'daisysms.com':
+                # Input phone number
+                number_field = vc.findViewByIdOrRaise('com.truthsocial.android.app:id/phone_edit')
+                number_field.setText(phone_number[1:])
 
-    elif website == 'api.sms-activate.org':
-        # Try to set the country code
-        country_block = vc.findViewByIdOrRaise('com.truthsocial.android.app:id/country_code_block')
-        country_block.touch()
+            elif website == 'api.sms-activate.org':
+                if not uk_set:
+                    # Try to set the country code
+                    country_block = vc.findViewByIdOrRaise('com.truthsocial.android.app:id/country_code_block')
+                    country_block.touch()
 
-        wait_for_view_text(vc, 'Search for country')
+                    wait_for_view_text(vc, 'Search for country')
 
-        search_bar = vc.findViewWithAttributeOrRaise('class', 'android.widget.EditText')
-        search_bar.setText('United')
+                    search_bar = vc.findViewWithAttributeOrRaise('class', 'android.widget.EditText')
+                    search_bar.setText('United')
 
-        wait_for_view_text(vc, 'United Kingdom')
+                    wait_for_view_text(vc, 'United Kingdom')
 
-        country = vc.findViewWithTextOrRaise('+44')
-        country.touch()
+                    country = vc.findViewWithTextOrRaise('+44')
+                    country.touch()
 
-        wait_for_view_text(vc, 'Enter your phone number')
+                    wait_for_view_text(vc, 'Enter your phone number')
+                uk_set = True
+                number_field = vc.findViewByIdOrRaise('com.truthsocial.android.app:id/phone_edit')
+                number_field.setText(phone_number[2:])
+            sleep(1)
 
-        number_field = vc.findViewByIdOrRaise('com.truthsocial.android.app:id/phone_edit')
-        number_field.setText(phone_number[2:])
-    sleep(1)
+            # Click next button
+            if interact_with_element(vc, 'NEXT', adb_path, app_name, 'Verification code', max_retries=1):
+                if number_id:
+                    if website == 'daisysms.com':
+                        # Get the code using the parsed ID
+                        code_details = get_code(api_key, 'getStatus', number_id)
+                        logger.info(code_details)
+                        if code_details and 'STATUS_OK' in code_details:
+                            # Extract the code and mark as done if needed
+                            verification_code = code_details.split(':')[1]
+                            result = mark_as_done(api_key, number_id, 6)  # Status 6 for marking as done
+                            logger.debug(f"Mark as done result: {result}")
+                    elif website == 'api.sms-activate.org':
+                        # Get the code using the parsed ID
+                        code_details = get_code(api_key, 'getRentStatus', number_id, website)
+                        logger.info(code_details)
+                        if code_details:
+                            # Extract the code and mark as done if needed
+                            verification_code = code_details
+                            # Exit the for loop
+                            break
+                else:
+                    logger.info("Failed to get verification code.")
+                    raise Exception('Verification code failed.')
+            else:
+                raise Exception('Phone number is rejected by the app.')
 
-    # Click next button
-    interact_with_element(vc, 'NEXT', adb_path, app_name, 'Verification code')
-
-    # Wait for "Verification code" text to appear
-    if number_id:
-        if website == 'daisysms.com':
-            # Get the code using the parsed ID
-            code_details = get_code(api_key, 'getStatus', number_id)
-            logger.info(code_details)
-            if code_details and 'STATUS_OK' in code_details:
-                # Extract the code and mark as done if needed
-                verification_code = code_details.split(':')[1]
-                result = mark_as_done(api_key, number_id, 6)  # Status 6 for marking as done
-                logger.debug(f"Mark as done result: {result}")
-        elif website == 'api.sms-activate.org':
-            # Get the code using the parsed ID
-            code_details = get_code(api_key, 'getRentStatus', number_id, website)
-            logger.info(code_details)
-            if code_details:
-                # Extract the code and mark as done if needed
-                verification_code = code_details
-    else:
-        logger.info("Failed to rent number.")
-        raise Exception('Phone renting failed.')
+        except Exception as e:
+            logger.info(f"Attempt {attempt+1} failed: {e}")
+            if attempt < max_attempts - 1:
+                logger.info(f"Retrying to rent a number. Attempt {attempt+2}...")
+                logger.info(f"Rented number will be cancelled: {rented[0]}")
+                if website == 'api.sms-activate.org':
+                    cancel_response = cancel_rent(api_key, rented[0])
+                    logger.info(f"Cancel response: {cancel_response}")
+                    rented.pop(0)
+                continue
+            else:
+                logger.info(f"Max attempts reached. Restarting the program.")
+                if len(rented) > 0:
+                    logger.info(f"Rented number will be cancelled: {rented[0]}")
+                    cancel_response = cancel_rent(api_key, rented[0])
+                    logger.info(f"Cancel response: {cancel_response}")
+                    rented.pop(0)
+                raise Exception(f'Phone renting failed {max_attempts} times. Restarting the program.')
 
     sleep(5)
     # Input the verification code in the text field
@@ -242,15 +271,15 @@ def main(serialno):
     
     # This means that the account has been created successfully
     # Log the username and password to the file: accounts.csv
-    header = ['Username', 'Password']
-    file_name = 'accounts.csv'
+    header = ['Username', 'Password', 'PhoneNumber', 'NumberID']
+    file_name = 'accounts_new.csv'
     try:
         with open(file_name, 'a', newline='') as f:
             writer = csv.writer(f)
             # Only write header if file is empty
             if f.tell() == 0:
                 writer.writerow(header)
-            writer.writerow([username, password, phone_number])
+            writer.writerow([username, password, phone_number, number_id])
     except Exception as e:
         logging.error(f"Error writing to CSV file: {e}")
     
