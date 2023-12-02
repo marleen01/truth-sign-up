@@ -5,7 +5,7 @@ from time import sleep
 import helper
 from get_mail import get_temp_email, get_message
 from ui_automation import interact_with_element, wait_for_view_text, set_date, print_views
-from get_phone import rent_number, get_code, mark_as_done
+from get_phone import rent_number, get_code, mark_as_done, lease_number, parse_duration, parse_api_website, parse_country
 from config import adb_path, app_name
 from recovery import perform_init_steps
 from generate_data import get_birthdate, generate_username, generate_random_password
@@ -141,16 +141,53 @@ def main(serialno):
     # Wait for the next button and click it
     interact_with_element(vc, 'NEXT', adb_path, app_name, 'Enter your phone number')
 
+    # Parse the API website from the config file
+    website = parse_api_website()
+
     # Search for phone number text field
-    api_key = config('DAISY_API_KEY')
-    # Rent a number and parse the ID
-    number_id, phone_number = rent_number(api_key, 'getNumber', 'ada')
+    if website == 'daisysms.com':
+        api_key = config('DAISY_API_KEY')
+        # Rent a number and parse the ID
+        number_id, phone_number = rent_number(api_key, 'getNumber', 'ada', website)
+
+    elif website == 'api.sms-activate.org':
+        api_key = config('SMS_ACTIVATE_API_KEY')
+        # Parse the duration from the config file
+        duration = parse_duration()
+        country = parse_country()
+        if country == 'ENGLAND':
+            country = 16
+        number_id, phone_number = lease_number(api_key, 'ada', duration, country, website)
+    else:
+        raise Exception('Unable to parse and set API key. Please check API keys in .env file.')
+
     logger.info(f"Number: {phone_number} ID: {number_id}")
     sleep(5)
 
-    # Input phone number
-    number_field = vc.findViewByIdOrRaise('com.truthsocial.android.app:id/phone_edit')
-    number_field.setText(phone_number[1:])
+    if website == 'daisysms.com':
+        # Input phone number
+        number_field = vc.findViewByIdOrRaise('com.truthsocial.android.app:id/phone_edit')
+        number_field.setText(phone_number[1:])
+
+    elif website == 'api.sms-activate.org':
+        # Try to set the country code
+        country_block = vc.findViewByIdOrRaise('com.truthsocial.android.app:id/country_code_block')
+        country_block.touch()
+
+        wait_for_view_text(vc, 'Search for country')
+
+        search_bar = vc.findViewWithAttributeOrRaise('class', 'android.widget.EditText')
+        search_bar.setText('United')
+
+        wait_for_view_text(vc, 'United Kingdom')
+
+        country = vc.findViewWithTextOrRaise('+44')
+        country.touch()
+
+        wait_for_view_text(vc, 'Enter your phone number')
+
+        number_field = vc.findViewByIdOrRaise('com.truthsocial.android.app:id/phone_edit')
+        number_field.setText(phone_number[2:])
     sleep(1)
 
     # Click next button
@@ -158,23 +195,30 @@ def main(serialno):
 
     # Wait for "Verification code" text to appear
     if number_id:
-        # Get the code using the parsed ID
-        code_details = get_code(api_key, 'getStatus', number_id)
-        logger.info(code_details)
-        if code_details and 'STATUS_OK' in code_details:
-            # Extract the code and mark as done if needed
-            verification_code = code_details.split(':')[1]
-            result = mark_as_done(api_key, number_id, 6)  # Status 6 for marking as done
-            print(result)
+        if website == 'daisysms.com':
+            # Get the code using the parsed ID
+            code_details = get_code(api_key, 'getStatus', number_id)
+            logger.info(code_details)
+            if code_details and 'STATUS_OK' in code_details:
+                # Extract the code and mark as done if needed
+                verification_code = code_details.split(':')[1]
+                result = mark_as_done(api_key, number_id, 6)  # Status 6 for marking as done
+                logger.debug(f"Mark as done result: {result}")
+        elif website == 'api.sms-activate.org':
+            # Get the code using the parsed ID
+            code_details = get_code(api_key, 'getRentStatus', number_id, website)
+            logger.info(code_details)
+            if code_details:
+                # Extract the code and mark as done if needed
+                verification_code = code_details
     else:
-        print("Failed to rent number.")
+        logger.info("Failed to rent number.")
         raise Exception('Phone renting failed.')
 
     sleep(5)
     # Input the verification code in the text field
     verification_field = vc.findViewByIdOrRaise('com.truthsocial.android.app:id/code_edit')
     verification_field.setText(verification_code)
-
 
     # Click next button
     interact_with_element(vc, 'NEXT', adb_path, app_name, 'Select a username')
@@ -188,7 +232,6 @@ def main(serialno):
     username_field.setText(username)
     sleep(1)
 
-    
     # Click the checkbox
     checkbox_field = vc.findViewByIdOrRaise('com.truthsocial.android.app:id/checkbox')
     checkbox_field.touch()
@@ -207,7 +250,7 @@ def main(serialno):
             # Only write header if file is empty
             if f.tell() == 0:
                 writer.writerow(header)
-            writer.writerow([username, password])
+            writer.writerow([username, password, phone_number])
     except Exception as e:
         logging.error(f"Error writing to CSV file: {e}")
     
